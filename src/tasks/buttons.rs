@@ -7,7 +7,7 @@ pub async fn button_task(inputs: ButtonInputs) {
     info!("Button task started!");
     log::info!("USB Logger: Button monitoring task started");
 
-    let mut button_state = ButtonState::new();
+    let mut button_state = ButtonState::new(&inputs);
 
     // Main button polling loop
     loop {

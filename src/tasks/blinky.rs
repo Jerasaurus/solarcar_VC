@@ -11,13 +11,13 @@ pub async fn blinky_task(mut led: Output<'static>) {
     let mut counter = 0u32;
     loop {
         led.set_high();
-        info!("LED ON - count {}", counter);
-        log::info!("USB: LED ON - count {}", counter);
+        // info!("LED ON - count {}", counter);
+        // log::info!("USB: LED ON - count {}", counter);
         Timer::after_millis(1000).await;
 
         led.set_low();
-        info!("LED OFF - count {}", counter);
-        log::info!("USB: LED OFF - count {}", counter);
+        // info!("LED OFF - count {}", counter);
+        // log::info!("USB: LED OFF - count {}", counter);
         Timer::after_millis(1000).await;
 
         counter += 1;

@@ -6,7 +6,7 @@ use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::spi::{self, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
-use embassy_vehiclecomputer::drivers::buttons::ButtonInputs;
+use embassy_vehiclecomputer::drivers::buttons::{ButtonInputs, Button, ButtonId};
 use embassy_vehiclecomputer::drivers::usb::setup_usb_logger;
 use embassy_vehiclecomputer::tasks;
 use {defmt_rtt as _, panic_probe as _};
@@ -44,23 +44,26 @@ async fn main(spawner: Spawner) {
     // Initialize USB logger for debugging
     // This creates a USB serial device that will appear on your computer
     // You can connect to it with a serial terminal to see log messages
-    // USB pins: PA12 (D+) and PA11 (D-) are standard for STM32F4
+    // USB pins: PA12 (D+) and PA11 (D-)
     setup_usb_logger(&spawner, p.USB_OTG_FS, p.PA12, p.PA11)
         .expect("Failed to initialize USB logger");
 
-    // Initialize button inputs
-    let button_inputs = ButtonInputs::new(
-        p.PD12,  // Cruise Down
-        p.PE14,  // Cruise Up
-        p.PE0,   // Reverse
-        p.PE4,   // Push-to-Talk
-        p.PD14,  // Horn
-        p.PE2,   // Power Save
-        p.PE8,   // Rearview
-        p.PE12,  // Left Turn (toggle)
-        p.PE6,   // Right Turn (toggle)
-        p.PE10,  // Lock (toggle)
-    );
+    // Initialize button inputs - all button definitions in one place!
+    // To add a new button:
+    // 1. Add its ButtonId variant to the enum in drivers/buttons/mod.rs
+    // 2. Add a Button entry here with the pin assignment
+    let button_inputs = ButtonInputs::new([
+        Button::regular(ButtonId::CruiseDown,  "Cruise Down",   p.PD12),
+        Button::regular(ButtonId::CruiseUp,    "Cruise Up",     p.PE14),
+        Button::regular(ButtonId::Reverse,     "Reverse",       p.PE0),
+        Button::regular(ButtonId::PushToTalk,  "Push-to-Talk",  p.PE4),
+        Button::regular(ButtonId::Horn,        "Horn",          p.PD14),
+        Button::regular(ButtonId::PowerSave,   "Power Save",    p.PE2),
+        Button::regular(ButtonId::Rearview,    "Rearview",      p.PE8),
+        Button::toggle(ButtonId::LeftTurn,     "Left Turn",     p.PE12),
+        Button::toggle(ButtonId::RightTurn,    "Right Turn",    p.PE6),
+        Button::toggle(ButtonId::Lock,         "Lock",          p.PE10),
+    ]);
 
     // Configure SPI1 for display
     let mut spi_config = spi::Config::default();

@@ -1,10 +1,9 @@
 use defmt::info;
-use embassy_stm32::gpio::{Input, Pull};
-use embassy_stm32::peripherals::{PD12, PE14, PE0, PE4, PD14, PE2, PE8, PE12, PE6, PE10};
+use embassy_stm32::gpio::{Flex, Pull, Pin};
 use embassy_stm32::Peri;
 
 /// Button identifiers
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ButtonId {
     CruiseDown,
     CruiseUp,
@@ -26,70 +25,114 @@ pub enum ButtonEvent {
     Toggled(ButtonId, bool), // (button, new_state)
 }
 
+/// Button type - regular or toggle
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ButtonType {
+    Regular,
+    Toggle,
+}
+
+/// Button configuration with pin
+pub struct Button {
+    pub id: ButtonId,
+    pub name: &'static str,
+    pub button_type: ButtonType,
+    pub pin: Flex<'static>,
+}
+
+impl Button {
+    /// Create a regular button
+    pub fn regular<P: Pin>(id: ButtonId, name: &'static str, pin: Peri<'static, P>) -> Self {
+        let mut flex = Flex::new(pin);
+        flex.set_as_input(Pull::Up);
+        Self {
+            id,
+            name,
+            button_type: ButtonType::Regular,
+            pin: flex,
+        }
+    }
+
+    /// Create a toggle button
+    pub fn toggle<P: Pin>(id: ButtonId, name: &'static str, pin: Peri<'static, P>) -> Self {
+        let mut flex = Flex::new(pin);
+        flex.set_as_input(Pull::Up);
+        Self {
+            id,
+            name,
+            button_type: ButtonType::Toggle,
+            pin: flex,
+        }
+    }
+}
+
 /// All button inputs
 pub struct ButtonInputs {
-    pub cruise_down: Input<'static>,
-    pub cruise_up: Input<'static>,
-    pub reverse: Input<'static>,
-    pub push_to_talk: Input<'static>,
-    pub horn: Input<'static>,
-    pub power_save: Input<'static>,
-    pub rearview: Input<'static>,
-    pub left_turn: Input<'static>,
-    pub right_turn: Input<'static>,
-    pub lock: Input<'static>,
+    buttons: heapless::Vec<Button, 16>,  // Support up to 16 buttons
 }
 
 impl ButtonInputs {
-    /// Initialize all button inputs with pull-up resistors
-    pub fn new(
-        pd12: Peri<'static, PD12>,
-        pe14: Peri<'static, PE14>,
-        pe0: Peri<'static, PE0>,
-        pe4: Peri<'static, PE4>,
-        pd14: Peri<'static, PD14>,
-        pe2: Peri<'static, PE2>,
-        pe8: Peri<'static, PE8>,
-        pe12: Peri<'static, PE12>,
-        pe6: Peri<'static, PE6>,
-        pe10: Peri<'static, PE10>,
-    ) -> Self {
+    /// Initialize button inputs from a list of buttons
+    /// This allows you to define buttons and their pins together in main.rs
+    pub fn new(buttons: impl IntoIterator<Item = Button>) -> Self {
         info!("Initializing button inputs");
 
-        Self {
-            cruise_down: Input::new(pd12, Pull::Up),
-            cruise_up: Input::new(pe14, Pull::Up),
-            reverse: Input::new(pe0, Pull::Up),
-            push_to_talk: Input::new(pe4, Pull::Up),
-            horn: Input::new(pd14, Pull::Up),
-            power_save: Input::new(pe2, Pull::Up),
-            rearview: Input::new(pe8, Pull::Up),
-            left_turn: Input::new(pe12, Pull::Up),
-            right_turn: Input::new(pe6, Pull::Up),
-            lock: Input::new(pe10, Pull::Up),
+        let mut button_vec = heapless::Vec::new();
+        for button in buttons {
+            let _ = button_vec.push(button);
         }
+
+        Self { buttons: button_vec }
+    }
+
+    /// Read the state of a specific button (returns true if pressed)
+    pub fn is_pressed(&self, id: ButtonId) -> bool {
+        if let Some(button) = self.buttons.iter().find(|b| b.id == id) {
+            // Inverted because we use pull-up resistors (active low)
+            return !button.pin.is_high();
+        }
+        false
     }
 }
 
 /// Button state tracker with debouncing
 pub struct ButtonState {
-    // Current debounced states (true = pressed, assuming active-low buttons)
-    pub states: [bool; 10],
+    // Current debounced states (true = pressed)
+    states: heapless::Vec<bool, 16>,
     // Raw states for debouncing
-    raw_states: [bool; 10],
+    raw_states: heapless::Vec<bool, 16>,
     // Debounce counters
-    debounce_counters: [u8; 10],
+    debounce_counters: heapless::Vec<u8, 16>,
     // Toggle states for toggle-mode buttons
-    pub toggle_states: [bool; 3], // left_turn, right_turn, lock
+    toggle_states: heapless::FnvIndexMap<ButtonId, bool, 8>,
 }
 
 impl ButtonState {
-    pub fn new() -> Self {
+    pub fn new(inputs: &ButtonInputs) -> Self {
+        let mut states = heapless::Vec::new();
+        let mut raw_states = heapless::Vec::new();
+        let mut debounce_counters = heapless::Vec::new();
+
+        // Initialize vectors with the right number of buttons
+        for _button in &inputs.buttons {
+            let _ = states.push(false);
+            let _ = raw_states.push(false);
+            let _ = debounce_counters.push(0);
+        }
+
+        // Initialize toggle states for toggle buttons
+        let mut toggle_states = heapless::FnvIndexMap::new();
+        for button in &inputs.buttons {
+            if button.button_type == ButtonType::Toggle {
+                let _ = toggle_states.insert(button.id, false);
+            }
+        }
+
         Self {
-            states: [false; 10],
-            raw_states: [false; 10],
-            debounce_counters: [0; 10],
-            toggle_states: [false; 3],
+            states,
+            raw_states,
+            debounce_counters,
+            toggle_states,
         }
     }
 
@@ -98,71 +141,40 @@ impl ButtonState {
     pub fn update(&mut self, inputs: &ButtonInputs) -> heapless::Vec<ButtonEvent, 10> {
         let mut events = heapless::Vec::new();
 
-        // Read current raw states (inverted because pull-up)
-        let raw = [
-            !inputs.cruise_down.is_high(),  // 0
-            !inputs.cruise_up.is_high(),     // 1
-            !inputs.reverse.is_high(),       // 2
-            !inputs.push_to_talk.is_high(),  // 3
-            !inputs.horn.is_high(),          // 4
-            !inputs.power_save.is_high(),    // 5
-            !inputs.rearview.is_high(),      // 6
-            !inputs.left_turn.is_high(),     // 7
-            !inputs.right_turn.is_high(),    // 8
-            !inputs.lock.is_high(),          // 9
-        ];
+        // Read and debounce each button
+        for (i, button) in inputs.buttons.iter().enumerate() {
+            // Read current raw state
+            let raw = inputs.is_pressed(button.id);
 
-        // Debounce each button
-        for i in 0..10 {
-            if raw[i] != self.raw_states[i] {
+            if raw != self.raw_states[i] {
                 // State changed, reset debounce counter
                 self.debounce_counters[i] = 0;
-                self.raw_states[i] = raw[i];
+                self.raw_states[i] = raw;
             } else if self.debounce_counters[i] < 5 {
                 // Same state, increment counter
                 self.debounce_counters[i] += 1;
 
                 // Check if debounced
-                if self.debounce_counters[i] == 5 && self.states[i] != raw[i] {
+                if self.debounce_counters[i] == 5 && self.states[i] != raw {
                     // State has been stable for 5 cycles, update
-                    self.states[i] = raw[i];
+                    self.states[i] = raw;
 
-                    // Generate events
-                    let button_id = match i {
-                        0 => ButtonId::CruiseDown,
-                        1 => ButtonId::CruiseUp,
-                        2 => ButtonId::Reverse,
-                        3 => ButtonId::PushToTalk,
-                        4 => ButtonId::Horn,
-                        5 => ButtonId::PowerSave,
-                        6 => ButtonId::Rearview,
-                        7 => ButtonId::LeftTurn,
-                        8 => ButtonId::RightTurn,
-                        9 => ButtonId::Lock,
-                        _ => continue,
-                    };
-
-                    // Check if this is a toggle button
-                    match button_id {
-                        ButtonId::LeftTurn | ButtonId::RightTurn | ButtonId::Lock => {
+                    // Generate events based on button type
+                    match button.button_type {
+                        ButtonType::Toggle => {
                             if self.states[i] {
                                 // Button pressed, toggle the state
-                                let toggle_idx = match button_id {
-                                    ButtonId::LeftTurn => 0,
-                                    ButtonId::RightTurn => 1,
-                                    ButtonId::Lock => 2,
-                                    _ => continue,
-                                };
-                                self.toggle_states[toggle_idx] = !self.toggle_states[toggle_idx];
-                                let _ = events.push(ButtonEvent::Toggled(button_id, self.toggle_states[toggle_idx]));
+                                if let Some(toggle_state) = self.toggle_states.get_mut(&button.id) {
+                                    *toggle_state = !*toggle_state;
+                                    let _ = events.push(ButtonEvent::Toggled(button.id, *toggle_state));
+                                }
                             }
                         }
-                        _ => {
-                            // Regular button
+                        ButtonType::Regular => {
                             if self.states[i] {
-                                let _ = events.push(ButtonEvent::Pressed(button_id));
+                                let _ = events.push(ButtonEvent::Pressed(button.id));
                             } else {
-                                let _ = events.push(ButtonEvent::Released(button_id));
+                                let _ = events.push(ButtonEvent::Released(button.id));
                             }
                         }
                     }
@@ -171,5 +183,10 @@ impl ButtonState {
         }
 
         events
+    }
+
+    /// Get the current toggle state of a toggle button
+    pub fn get_toggle_state(&self, id: ButtonId) -> Option<bool> {
+        self.toggle_states.get(&id).copied()
     }
 }
