@@ -1,3 +1,0 @@
-pub mod setup;
-
-pub use setup::setup_usb_logger;

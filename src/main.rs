@@ -10,7 +10,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
 use embassy_time::Timer;
 use embassy_vehiclecomputer::drivers::display::Ssd1322Display;
-use embassy_vehiclecomputer::usb::setup_usb_logger;
+use embassy_vehiclecomputer::drivers::usb::setup_usb_logger;
 use embedded_graphics::{
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Gray4,
@@ -46,11 +46,15 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_stm32::init(config);
 
-    // Initialize LED
+    // Initialize LED on PD8 (starts OFF)
     let led = Output::new(p.PD8, Level::Low, Speed::Low);
 
-    // Initialize USB logger
-    setup_usb_logger(&spawner, p.USB_OTG_FS, p.PA12, p.PA11).unwrap();
+    // Initialize USB logger for debugging
+    // This creates a USB serial device that will appear on your computer
+    // You can connect to it with a serial terminal to see log messages
+    // USB pins: PA12 (D+) and PA11 (D-) are standard for STM32F4
+    setup_usb_logger(&spawner, p.USB_OTG_FS, p.PA12, p.PA11)
+        .expect("Failed to initialize USB logger");
 
     // Configure SPI1 for display
     let mut spi_config = spi::Config::default();
