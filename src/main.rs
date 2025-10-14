@@ -6,6 +6,7 @@ use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::spi::{self, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
+use embassy_vehiclecomputer::drivers::buttons::ButtonInputs;
 use embassy_vehiclecomputer::drivers::usb::setup_usb_logger;
 use embassy_vehiclecomputer::tasks;
 use {defmt_rtt as _, panic_probe as _};
@@ -47,6 +48,20 @@ async fn main(spawner: Spawner) {
     setup_usb_logger(&spawner, p.USB_OTG_FS, p.PA12, p.PA11)
         .expect("Failed to initialize USB logger");
 
+    // Initialize button inputs
+    let button_inputs = ButtonInputs::new(
+        p.PD12,  // Cruise Down
+        p.PE14,  // Cruise Up
+        p.PE0,   // Reverse
+        p.PE4,   // Push-to-Talk
+        p.PD14,  // Horn
+        p.PE2,   // Power Save
+        p.PE8,   // Rearview
+        p.PE12,  // Left Turn (toggle)
+        p.PE6,   // Right Turn (toggle)
+        p.PE10,  // Lock (toggle)
+    );
+
     // Configure SPI1 for display
     let mut spi_config = spi::Config::default();
     spi_config.mode = spi::Mode {
@@ -73,4 +88,5 @@ async fn main(spawner: Spawner) {
     // Spawn tasks
     spawner.spawn(tasks::display_task(spi, dc, cs, rst)).unwrap();
     spawner.spawn(tasks::blinky_task(led)).unwrap();
+    spawner.spawn(tasks::button_task(button_inputs)).unwrap();
 }
