@@ -47,7 +47,3 @@ cu -l /dev/tty.usbmodem11101 -s 115200
 - Embassy framework for async embedded development
 - defmt for efficient logging
 - cortex-m for ARM Cortex-M specific functionality
-
-## License
-
-MIT OR Apache-2.0

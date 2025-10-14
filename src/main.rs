@@ -1,22 +1,13 @@
 #![no_std]
 #![no_main]
 
-use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_stm32::mode::Async;
 use embassy_stm32::spi::{self, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
-use embassy_time::Timer;
-use embassy_vehiclecomputer::drivers::display::Ssd1322Display;
 use embassy_vehiclecomputer::drivers::usb::setup_usb_logger;
-use embedded_graphics::{
-    mono_font::{ascii::FONT_10X20, MonoTextStyle},
-    pixelcolor::Gray4,
-    prelude::*,
-    text::{Alignment, Text},
-};
+use embassy_vehiclecomputer::tasks;
 use {defmt_rtt as _, panic_probe as _};
 
 #[embassy_executor::main]
@@ -80,88 +71,6 @@ async fn main(spawner: Spawner) {
     let rst = Output::new(p.PD7, Level::High, Speed::High);  // Reset
 
     // Spawn tasks
-    spawner.spawn(display_task(spi, dc, cs, rst)).unwrap();
-    spawner.spawn(blinky_task(led)).unwrap();
-}
-
-#[embassy_executor::task]
-async fn blinky_task(mut led: Output<'static>) {
-    info!("Blinky started!");
-    Timer::after_millis(1000).await;
-    log::info!("USB Logger: Blinky task started on PD8");
-
-    let mut counter = 0u32;
-    loop {
-        led.set_high();
-        info!("LED ON - count {}", counter);
-        log::info!("USB: LED ON - count {}", counter);
-        Timer::after_millis(1000).await;
-
-        led.set_low();
-        info!("LED OFF - count {}", counter);
-        log::info!("USB: LED OFF - count {}", counter);
-        Timer::after_millis(1000).await;
-
-        counter += 1;
-    }
-}
-
-#[embassy_executor::task]
-async fn display_task(
-    spi: Spi<'static, Async>,
-    dc: Output<'static>,
-    cs: Output<'static>,
-    rst: Output<'static>,
-) {
-    info!("Display task started!");
-
-    // Initialize display
-    let mut display = Ssd1322Display::new(spi, dc, cs, rst).await;
-    Timer::after_millis(100).await;
-    log::info!("USB: Display initialized");
-
-    // Animation variables
-    let mut brightness = 0u8;
-    let mut increasing = true;
-    let mut y_offset = 0i32;
-
-    loop {
-        // Clear display
-        display.clear();
-
-        // Create dynamic style based on current brightness
-        let text_style = MonoTextStyle::new(&FONT_10X20, Gray4::new(brightness));
-
-        // Draw "HELLO WORLD" centered with current brightness
-        Text::with_alignment(
-            "HELLO WORLD",
-            Point::new(128, 32 + y_offset), // Center of 256x64 display
-            text_style,
-            Alignment::Center,
-        )
-        .draw(&mut display)
-        .ok();
-
-        // Update display
-        display.flush().await;
-
-        // Animate brightness
-        if increasing {
-            if brightness < 15 {
-                brightness += 1;
-            } else {
-                increasing = false;
-            }
-        } else {
-            if brightness > 1 {
-                brightness -= 1;
-            } else {
-                increasing = true;
-                // Small vertical animation when cycle completes
-                y_offset = (y_offset + 1) % 5 - 2; // Oscillate between -2 and 2
-            }
-        }
-
-        Timer::after_millis(100).await;
-    }
+    spawner.spawn(tasks::display_task(spi, dc, cs, rst)).unwrap();
+    spawner.spawn(tasks::blinky_task(led)).unwrap();
 }
