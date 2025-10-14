@@ -1,5 +1,6 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "./flash_firmware.sh"
+runner = "./flash_firmware.sh"  # DFU flashing only - no debugging
+#runner = "probe-rs run --chip STM32F429VI"  # Enable debugging with probe-rs
 
 [build]
 target = "thumbv7em-none-eabi"
