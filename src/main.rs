@@ -1,18 +1,30 @@
 #![no_std]
 #![no_main]
 
+use defmt::info;
+use embassy_net::Stack;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::spi::{self, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
 use embassy_vehiclecomputer::drivers::buttons::{ButtonInputs, Button, ButtonId};
+use embassy_vehiclecomputer::drivers::network;
 use embassy_vehiclecomputer::drivers::usb::setup_usb_logger;
 use embassy_vehiclecomputer::tasks;
 use {defmt_rtt as _, panic_probe as _};
 
+// Async task for waiting for network link
+#[embassy_executor::task]
+async fn wait_for_link_task(stack: &'static Stack<'static>) {
+    network::wait_for_link_up(stack).await;
+    info!("Ethernet link is up!");
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    info!("Starting main...");
+
     // Configure clocks using 25 MHz external oscillator
     let mut config = Config::default();
     {
@@ -47,6 +59,39 @@ async fn main(spawner: Spawner) {
     // USB pins: PA12 (D+) and PA11 (D-)
     setup_usb_logger(&spawner, p.USB_OTG_FS, p.PA12, p.PA11)
         .expect("Failed to initialize USB logger");
+
+    // Reset the LAN8742A PHY before initializing Ethernet
+    // The PHY reset pin is on PD15 (active low)
+    // This must happen BEFORE Ethernet initialization
+    network::reset_phy_blocking(p.PD15);
+
+    // Initialize real Ethernet hardware with LAN8742A PHY
+    // Using RMII interface (8 pins) for reduced pin count
+    info!("Initializing Ethernet with LAN8742A PHY...");
+    let (stack, runner) = network::init_ethernet(
+        p.ETH,      // Ethernet MAC peripheral
+        p.PA1,      // REF_CLK (RMII 50MHz reference clock from PHY)
+        p.PA2,      // MDIO (management data I/O)
+        p.PA7,      // CRS_DV (carrier sense/data valid)
+        p.PB11,     // TX_EN (transmit enable)
+        p.PB12,     // TXD0 (transmit data bit 0)
+        p.PB13,     // TXD1 (transmit data bit 1)
+        p.PC1,      // MDC (management data clock)
+        p.PC4,      // RXD0 (receive data bit 0)
+        p.PC5,      // RXD1 (receive data bit 1)
+        p.RNG,      // Random number generator for network protocols
+        0x12345678, // Seed for RNG (could use timer or ADC value)
+    );
+
+    // Spawn the network task (required for embassy-net stack)
+    spawner.spawn(network::net_task(runner)).unwrap();
+
+    // Wait for network link to be up
+    spawner.spawn(wait_for_link_task(stack)).unwrap();
+
+    info!("Using STM32F429 Ethernet MAC with LAN8742A PHY");
+    info!("IP: 192.168.0.30");
+    info!("Network targets: VC=192.168.0.20:3001, BMS=192.168.0.10:2001");
 
     // Initialize button inputs - all button definitions in one place!
     // To add a new button:
@@ -92,4 +137,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(tasks::display_task(spi, dc, cs, rst)).unwrap();
     spawner.spawn(tasks::blinky_task(led)).unwrap();
     spawner.spawn(tasks::button_task(button_inputs)).unwrap();
+
+    // Spawn network tasks
+    spawner.spawn(tasks::telemetry_task(stack)).unwrap();
+    spawner.spawn(tasks::steering_update_task(stack)).unwrap();
 }
