@@ -1,0 +1,9 @@
+MEMORY
+{
+    /* Application runs from Partition A (after 48KB bootloader + 16KB config) */
+    /* Dual-partition system: Partition A = 992KB, Partition B = 992KB */
+    /* Bootloader handles partition swapping for power-fail safe updates */
+    FLASH : ORIGIN = 0x08010000, LENGTH = 992K
+    /* STM32F429VI has 192KB main SRAM */
+    RAM : ORIGIN = 0x20000000, LENGTH = 192K
+}

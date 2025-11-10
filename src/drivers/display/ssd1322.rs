@@ -5,11 +5,22 @@ use embassy_stm32::spi::Spi;
 use embassy_time::Timer;
 use embedded_graphics::pixelcolor::Gray4;
 use embedded_graphics::prelude::*;
+use super::font16::{FONT16_CHAR_ADDR, FONT_WIDTH as FONT16_WIDTH, FONT_HEIGHT as FONT16_HEIGHT};
 
 // Display dimensions
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 64;
 const DISPLAY_BUFFER_SIZE: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
+
+// Display shade constants
+pub const DISPLAY_WHITE: u8 = 0xF;
+pub const DISPLAY_MID_SHADE: u8 = 0x7;
+pub const DISPLAY_LOW_SHADE: u8 = 0x2;
+pub const DISPLAY_VLOW_SHADE: u8 = 0x1;
+pub const DISPLAY_BLACK: u8 = 0x0;
+
+// Font multiplier for large characters
+const FONT_LARGE_MULTIPLIER: usize = 4;
 
 // SSD1322 Commands
 const CMD_SET_COMMAND_LOCK: u8 = 0xFD;
@@ -156,6 +167,91 @@ impl<'a> Ssd1322Display<'a> {
 
     pub fn clear(&mut self) {
         self.framebuffer.fill(0);
+    }
+
+    pub fn fill(&mut self, shade: u8) {
+        self.framebuffer.fill(shade & 0xF);
+    }
+
+    /// Draw a pixel at the specified location
+    pub fn draw_pixel(&mut self, x: usize, y: usize, value: u8) {
+        if x < DISPLAY_WIDTH && y < DISPLAY_HEIGHT {
+            self.framebuffer[x + (y * DISPLAY_WIDTH)] = value & 0xF;
+        }
+    }
+
+    /// Draw a character using font16
+    pub fn draw_char(&mut self, x: usize, y: usize, fg: u8, bg: u8, ch: char) {
+        let char_idx = ch as usize;
+        if char_idx < 32 || char_idx >= 127 {
+            return; // Outside printable ASCII range
+        }
+        
+        let data = FONT16_CHAR_ADDR[char_idx - 32];
+        
+        let mut byte_count = 0;
+        for stripe in 0..(FONT16_HEIGHT / 8) {
+            for col in 0..FONT16_WIDTH {
+                for row in 0..8 {
+                    let x_offset = col;
+                    let y_offset = stripe * 8 + row;
+                    let shade = if data[byte_count] & (1 << row) != 0 {
+                        fg
+                    } else {
+                        bg
+                    };
+                    self.draw_pixel(x + x_offset, y + y_offset, shade);
+                }
+                byte_count += 1;
+            }
+        }
+    }
+
+    /// Draw a character using large font (4x scaled font16)
+    pub fn draw_char_large(&mut self, x: usize, y: usize, fg: u8, bg: u8, ch: char) {
+        let char_idx = ch as usize;
+        if char_idx < 32 || char_idx >= 127 {
+            return;
+        }
+        
+        let data = FONT16_CHAR_ADDR[char_idx - 32];
+        
+        let mut byte_count = 0;
+        for stripe in 0..(FONT16_HEIGHT / 8) {
+            for col in 0..FONT16_WIDTH {
+                for row in 0..8 {
+                    let shade = if data[byte_count] & (1 << row) != 0 {
+                        fg
+                    } else {
+                        bg
+                    };
+                    
+                    // Draw scaled pixel (4x4 block)
+                    for scale_y in 0..FONT_LARGE_MULTIPLIER {
+                        for scale_x in 0..FONT_LARGE_MULTIPLIER {
+                            let x_offset = col * FONT_LARGE_MULTIPLIER + scale_x;
+                            let y_offset = (stripe * 8 + row) * FONT_LARGE_MULTIPLIER + scale_y;
+                            self.draw_pixel(x + x_offset, y + y_offset, shade);
+                        }
+                    }
+                }
+                byte_count += 1;
+            }
+        }
+    }
+
+    /// Draw a string using font16
+    pub fn draw_string(&mut self, x: usize, y: usize, fg: u8, bg: u8, text: &str) {
+        for (i, ch) in text.chars().enumerate() {
+            self.draw_char(x + (FONT16_WIDTH * i), y, fg, bg, ch);
+        }
+    }
+
+    /// Draw a string using large font
+    pub fn draw_string_large(&mut self, x: usize, y: usize, fg: u8, bg: u8, text: &str) {
+        for (i, ch) in text.chars().enumerate() {
+            self.draw_char_large(x + (FONT16_WIDTH * FONT_LARGE_MULTIPLIER * i), y, fg, bg, ch);
+        }
     }
 
     pub async fn flush(&mut self) {

@@ -3,7 +3,7 @@
 runner = "probe-rs run --chip STM32F429VI --speed 4600"  # Enable debugging with probe-rs
 
 [build]
-target = "thumbv7em-none-eabi"
+target = "thumbv7em-none-eabihf"
 
 [env]
 DEFMT_LOG = "info"
